@@ -172,6 +172,33 @@ app.post('/set-cookie', (req, res) => {
   res.json({ success: true });
 });
 
+// ─── POST /set-cookies (full cookie import) ─────────────────────────
+
+app.post('/set-cookies', (req, res) => {
+  console.log(`[${ts()}] POST /set-cookies`);
+  const { cookies } = req.body || {};
+
+  if (!Array.isArray(cookies) || cookies.length === 0) {
+    return res.status(400).json({ success: false, error: 'Missing or empty cookies array in body. Export cookies as JSON from a browser extension like EditThisCookie.' });
+  }
+
+  // Normalize cookies from browser extension format to Puppeteer format
+  const normalized = cookies.map(c => ({
+    name: c.name,
+    value: c.value,
+    domain: c.domain || '.linkedin.com',
+    path: c.path || '/',
+    httpOnly: c.httpOnly !== undefined ? c.httpOnly : false,
+    secure: c.secure !== undefined ? c.secure : true,
+    ...(c.sameSite ? { sameSite: c.sameSite } : {}),
+    ...(c.expirationDate ? { expires: c.expirationDate } : {})
+  }));
+
+  fs.writeFileSync(COOKIES_PATH, JSON.stringify(normalized, null, 2));
+  console.log(`[${ts()}] ${normalized.length} cookies saved to ${COOKIES_PATH}`);
+  res.json({ success: true, cookieCount: normalized.length });
+});
+
 // ─── POST /login ────────────────────────────────────────────────────
 
 app.post('/login', async (req, res) => {
@@ -323,6 +350,7 @@ app.post('/profile', async (req, res) => {
 
   const profileUrl = normalizeProfileUrl(linkedin_url);
   console.log(`[${ts()}] Scraping profile: ${profileUrl}`);
+  const DEBUG_SCREENSHOT = path.join(__dirname, 'debug-profile.png');
 
   let page = null;
   try {
@@ -331,7 +359,8 @@ app.post('/profile', async (req, res) => {
 
     // Check for login redirect
     if (isLoginRedirect(page.url())) {
-      return res.status(401).json({ success: false, error: 'Cookie expired' });
+      await page.screenshot({ path: DEBUG_SCREENSHOT, fullPage: true });
+      return res.status(401).json({ success: false, error: 'Cookie expired. Screenshot saved to debug-profile.png' });
     }
 
     // Wait for main content
@@ -551,18 +580,25 @@ app.post('/profile', async (req, res) => {
 
     // Check if we got a valid profile
     if (!profile.name) {
-      return res.status(404).json({ success: false, error: 'Profile not found or page could not be parsed' });
+      await page.screenshot({ path: DEBUG_SCREENSHOT, fullPage: true });
+      return res.status(404).json({ success: false, error: 'Profile not found or page could not be parsed. Screenshot saved to debug-profile.png' });
     }
+
+    // Save a screenshot of the successfully scraped page
+    await page.screenshot({ path: DEBUG_SCREENSHOT, fullPage: true });
 
     console.log(`[${ts()}] Scraped profile: ${profile.name}`);
     res.json({ success: true, profile });
 
   } catch (err) {
     console.error(`[${ts()}] Profile scrape error:`, err.message);
-    if (err.message.includes('ERR_TOO_MANY_REDIRECTS')) {
-      return res.status(401).json({ success: false, error: 'Too many redirects — cookie is invalid or expired. Use POST /login to re-authenticate from this server.' });
+    if (page) {
+      try { await page.screenshot({ path: DEBUG_SCREENSHOT, fullPage: true }); } catch (_) {}
     }
-    res.status(500).json({ success: false, error: err.message });
+    if (err.message.includes('ERR_TOO_MANY_REDIRECTS')) {
+      return res.status(401).json({ success: false, error: 'Too many redirects — cookie is invalid or expired. Use POST /login to re-authenticate from this server. Screenshot saved to debug-profile.png' });
+    }
+    res.status(500).json({ success: false, error: err.message + ' — Screenshot saved to debug-profile.png' });
   } finally {
     if (page) {
       try { await page.close(); } catch (_) {}
@@ -591,6 +627,7 @@ app.post('/company', async (req, res) => {
 
   const companyUrl = normalizeCompanyUrl(linkedin_url);
   console.log(`[${ts()}] Scraping company: ${companyUrl}`);
+  const DEBUG_SCREENSHOT = path.join(__dirname, 'debug-company.png');
 
   let page = null;
   try {
@@ -599,7 +636,8 @@ app.post('/company', async (req, res) => {
 
     // Check for login redirect
     if (isLoginRedirect(page.url())) {
-      return res.status(401).json({ success: false, error: 'Cookie expired' });
+      await page.screenshot({ path: DEBUG_SCREENSHOT, fullPage: true });
+      return res.status(401).json({ success: false, error: 'Cookie expired. Screenshot saved to debug-company.png' });
     }
 
     // Wait for main content
@@ -692,18 +730,25 @@ app.post('/company', async (req, res) => {
     }, companyUrl);
 
     if (!company.name) {
-      return res.status(404).json({ success: false, error: 'Company not found or page could not be parsed' });
+      await page.screenshot({ path: DEBUG_SCREENSHOT, fullPage: true });
+      return res.status(404).json({ success: false, error: 'Company not found or page could not be parsed. Screenshot saved to debug-company.png' });
     }
+
+    // Save a screenshot of the successfully scraped page
+    await page.screenshot({ path: DEBUG_SCREENSHOT, fullPage: true });
 
     console.log(`[${ts()}] Scraped company: ${company.name}`);
     res.json({ success: true, company });
 
   } catch (err) {
     console.error(`[${ts()}] Company scrape error:`, err.message);
-    if (err.message.includes('ERR_TOO_MANY_REDIRECTS')) {
-      return res.status(401).json({ success: false, error: 'Too many redirects — cookie is invalid or expired. Use POST /login to re-authenticate from this server.' });
+    if (page) {
+      try { await page.screenshot({ path: DEBUG_SCREENSHOT, fullPage: true }); } catch (_) {}
     }
-    res.status(500).json({ success: false, error: err.message });
+    if (err.message.includes('ERR_TOO_MANY_REDIRECTS')) {
+      return res.status(401).json({ success: false, error: 'Too many redirects — cookie is invalid or expired. Use POST /login to re-authenticate from this server. Screenshot saved to debug-company.png' });
+    }
+    res.status(500).json({ success: false, error: err.message + ' — Screenshot saved to debug-company.png' });
   } finally {
     if (page) {
       try { await page.close(); } catch (_) {}

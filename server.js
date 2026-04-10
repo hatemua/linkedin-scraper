@@ -176,33 +176,84 @@ app.post('/login', async (req, res) => {
     return res.status(400).json({ success: false, error: 'Missing email or password in body' });
   }
 
+  const DEBUG_SCREENSHOT = path.join(__dirname, 'debug-login.png');
+
   let page = null;
   try {
     const b = await launchBrowser();
     page = await b.newPage();
     await page.setUserAgent(USER_AGENT);
+    await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' });
     await page.setViewport({ width: 1280, height: 800 });
 
     await page.goto('https://www.linkedin.com/login', { waitUntil: 'networkidle2', timeout: 30000 });
 
+    const landingUrl = page.url();
+    const landingTitle = await page.title();
+    console.log(`[${ts()}] Login page loaded: ${landingUrl} — "${landingTitle}"`);
+
+    // Find username field with multiple selectors
+    const usernameSelectors = ['#username', 'input[name="session_key"]', 'input[autocomplete="username"]'];
+    let usernameEl = null;
+    for (const sel of usernameSelectors) {
+      usernameEl = await page.$(sel);
+      if (usernameEl) break;
+    }
+
+    if (!usernameEl) {
+      await page.screenshot({ path: DEBUG_SCREENSHOT, fullPage: true });
+      console.error(`[${ts()}] Login form not found. Screenshot saved to ${DEBUG_SCREENSHOT}`);
+      return res.status(500).json({ success: false, error: `Login form not found on page. URL: ${landingUrl}, Title: "${landingTitle}". Screenshot saved to debug-login.png on the server.` });
+    }
+
+    // Find password field
+    const passwordSelectors = ['#password', 'input[name="session_password"]', 'input[autocomplete="current-password"]'];
+    let passwordEl = null;
+    for (const sel of passwordSelectors) {
+      passwordEl = await page.$(sel);
+      if (passwordEl) break;
+    }
+
+    if (!passwordEl) {
+      await page.screenshot({ path: DEBUG_SCREENSHOT, fullPage: true });
+      return res.status(500).json({ success: false, error: `Password field not found. URL: ${landingUrl}. Screenshot saved to debug-login.png on the server.` });
+    }
+
     // Fill in credentials
-    await page.type('#username', email, { delay: 50 });
-    await page.type('#password', password, { delay: 50 });
-    await page.click('button[type="submit"]');
+    await usernameEl.type(email, { delay: 50 });
+    await passwordEl.type(password, { delay: 50 });
+
+    // Find and click submit button
+    const submitSelectors = ['button[type="submit"]', 'button[data-litms-control-urn="login-submit"]', 'button.btn__primary--large'];
+    let submitEl = null;
+    for (const sel of submitSelectors) {
+      submitEl = await page.$(sel);
+      if (submitEl) break;
+    }
+
+    if (!submitEl) {
+      await page.screenshot({ path: DEBUG_SCREENSHOT, fullPage: true });
+      return res.status(500).json({ success: false, error: `Submit button not found. URL: ${landingUrl}. Screenshot saved to debug-login.png on the server.` });
+    }
+
+    await submitEl.click();
 
     // Wait for navigation after login
     await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 });
 
     const currentUrl = page.url();
+    console.log(`[${ts()}] Post-login URL: ${currentUrl}`);
 
     // Check for security challenge (CAPTCHA, 2FA, verification)
     if (currentUrl.includes('/checkpoint') || currentUrl.includes('/challenge')) {
-      return res.status(403).json({ success: false, error: 'LinkedIn security challenge detected (CAPTCHA or 2FA). Try again later or verify your account.' });
+      await page.screenshot({ path: DEBUG_SCREENSHOT, fullPage: true });
+      return res.status(403).json({ success: false, error: 'LinkedIn security challenge detected (CAPTCHA or 2FA). Screenshot saved to debug-login.png on the server.' });
     }
 
     // Check if still on login page (wrong credentials)
     if (currentUrl.includes('/login')) {
-      return res.status(401).json({ success: false, error: 'Login failed. Check your email and password.' });
+      await page.screenshot({ path: DEBUG_SCREENSHOT, fullPage: true });
+      return res.status(401).json({ success: false, error: 'Login failed — check your email and password. Screenshot saved to debug-login.png on the server.' });
     }
 
     // Extract all cookies from the authenticated session
@@ -215,7 +266,10 @@ app.post('/login', async (req, res) => {
 
   } catch (err) {
     console.error(`[${ts()}] Login error:`, err.message);
-    res.status(500).json({ success: false, error: err.message });
+    if (page) {
+      try { await page.screenshot({ path: DEBUG_SCREENSHOT, fullPage: true }); } catch (_) {}
+    }
+    res.status(500).json({ success: false, error: err.message + ' — Screenshot saved to debug-login.png on the server.' });
   } finally {
     if (page) {
       try { await page.close(); } catch (_) {}

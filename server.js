@@ -193,7 +193,7 @@ app.post('/login', async (req, res) => {
     console.log(`[${ts()}] Login page loaded: ${landingUrl} — "${landingTitle}"`);
 
     // Find username field with multiple selectors
-    const usernameSelectors = ['#username', 'input[name="session_key"]', 'input[autocomplete="username"]'];
+    const usernameSelectors = ['#username', 'input[name="session_key"]', 'input[autocomplete="username"]', 'input[autocomplete="email"]', 'input[type="email"]', 'input[type="text"]'];
     let usernameEl = null;
     for (const sel of usernameSelectors) {
       usernameEl = await page.$(sel);
@@ -207,7 +207,7 @@ app.post('/login', async (req, res) => {
     }
 
     // Find password field
-    const passwordSelectors = ['#password', 'input[name="session_password"]', 'input[autocomplete="current-password"]'];
+    const passwordSelectors = ['#password', 'input[name="session_password"]', 'input[autocomplete="current-password"]', 'input[type="password"]'];
     let passwordEl = null;
     for (const sel of passwordSelectors) {
       passwordEl = await page.$(sel);
@@ -224,11 +224,27 @@ app.post('/login', async (req, res) => {
     await passwordEl.type(password, { delay: 50 });
 
     // Find and click submit button
-    const submitSelectors = ['button[type="submit"]', 'button[data-litms-control-urn="login-submit"]', 'button.btn__primary--large'];
+    const submitSelectors = ['button[type="submit"]', 'button[data-litms-control-urn="login-submit"]', 'button.btn__primary--large', 'button.sign-in-form__submit-btn'];
     let submitEl = null;
     for (const sel of submitSelectors) {
       submitEl = await page.$(sel);
       if (submitEl) break;
+    }
+    // Fallback: find button containing "Sign in" text
+    if (!submitEl) {
+      submitEl = await page.evaluateHandle(() => {
+        const buttons = document.querySelectorAll('button');
+        for (const btn of buttons) {
+          if (btn.textContent.trim().toLowerCase() === 'sign in') return btn;
+        }
+        return null;
+      });
+      if (submitEl && !(await submitEl.jsonValue() !== null)) submitEl = null;
+      // evaluateHandle returns a JSHandle; check if it's usable
+      try {
+        const tag = await submitEl.evaluate(el => el ? el.tagName : null);
+        if (!tag) submitEl = null;
+      } catch (_) { submitEl = null; }
     }
 
     if (!submitEl) {

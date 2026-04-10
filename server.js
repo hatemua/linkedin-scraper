@@ -166,6 +166,63 @@ app.post('/set-cookie', (req, res) => {
   res.json({ success: true });
 });
 
+// ─── POST /login ────────────────────────────────────────────────────
+
+app.post('/login', async (req, res) => {
+  console.log(`[${ts()}] POST /login`);
+  const { email, password } = req.body || {};
+
+  if (!email || !password) {
+    return res.status(400).json({ success: false, error: 'Missing email or password in body' });
+  }
+
+  let page = null;
+  try {
+    const b = await launchBrowser();
+    page = await b.newPage();
+    await page.setUserAgent(USER_AGENT);
+    await page.setViewport({ width: 1280, height: 800 });
+
+    await page.goto('https://www.linkedin.com/login', { waitUntil: 'networkidle2', timeout: 30000 });
+
+    // Fill in credentials
+    await page.type('#username', email, { delay: 50 });
+    await page.type('#password', password, { delay: 50 });
+    await page.click('button[type="submit"]');
+
+    // Wait for navigation after login
+    await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 });
+
+    const currentUrl = page.url();
+
+    // Check for security challenge (CAPTCHA, 2FA, verification)
+    if (currentUrl.includes('/checkpoint') || currentUrl.includes('/challenge')) {
+      return res.status(403).json({ success: false, error: 'LinkedIn security challenge detected (CAPTCHA or 2FA). Try again later or verify your account.' });
+    }
+
+    // Check if still on login page (wrong credentials)
+    if (currentUrl.includes('/login')) {
+      return res.status(401).json({ success: false, error: 'Login failed. Check your email and password.' });
+    }
+
+    // Extract all cookies from the authenticated session
+    const cookies = await page.cookies();
+    fs.writeFileSync(COOKIES_PATH, JSON.stringify(cookies, null, 2));
+
+    const hasLiAt = cookies.some(c => c.name === 'li_at');
+    console.log(`[${ts()}] Login successful, ${cookies.length} cookies saved (li_at: ${hasLiAt})`);
+    res.json({ success: true, cookieCount: cookies.length });
+
+  } catch (err) {
+    console.error(`[${ts()}] Login error:`, err.message);
+    res.status(500).json({ success: false, error: err.message });
+  } finally {
+    if (page) {
+      try { await page.close(); } catch (_) {}
+    }
+  }
+});
+
 // ─── POST /profile ───────────────────────────────────────────────────
 
 app.post('/profile', async (req, res) => {
@@ -423,6 +480,9 @@ app.post('/profile', async (req, res) => {
 
   } catch (err) {
     console.error(`[${ts()}] Profile scrape error:`, err.message);
+    if (err.message.includes('ERR_TOO_MANY_REDIRECTS')) {
+      return res.status(401).json({ success: false, error: 'Too many redirects — cookie is invalid or expired. Use POST /login to re-authenticate from this server.' });
+    }
     res.status(500).json({ success: false, error: err.message });
   } finally {
     if (page) {
@@ -561,6 +621,9 @@ app.post('/company', async (req, res) => {
 
   } catch (err) {
     console.error(`[${ts()}] Company scrape error:`, err.message);
+    if (err.message.includes('ERR_TOO_MANY_REDIRECTS')) {
+      return res.status(401).json({ success: false, error: 'Too many redirects — cookie is invalid or expired. Use POST /login to re-authenticate from this server.' });
+    }
     res.status(500).json({ success: false, error: err.message });
   } finally {
     if (page) {

@@ -1,6 +1,8 @@
 require('dotenv').config();
 const express = require('express');
-const puppeteer = require('puppeteer-core');
+const puppeteer = require('puppeteer-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+puppeteer.use(StealthPlugin());
 const fs = require('fs');
 const path = require('path');
 
@@ -29,7 +31,8 @@ async function launchBrowser() {
       '--disable-dev-shm-usage',
       '--disable-gpu',
       '--window-size=1280,800',
-      '--lang=en-US,en'
+      '--lang=en-US,en',
+      '--disable-blink-features=AutomationControlled'
     ]
   });
   browser.on('disconnected', () => { browser = null; });
@@ -40,6 +43,9 @@ async function launchBrowser() {
 async function getPage() {
   const b = await launchBrowser();
   const page = await b.newPage();
+  await page.evaluateOnNewDocument(() => {
+    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+  });
   await page.setUserAgent(USER_AGENT);
   await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' });
   await page.setViewport({ width: 1280, height: 800 });
@@ -182,6 +188,9 @@ app.post('/login', async (req, res) => {
   try {
     const b = await launchBrowser();
     page = await b.newPage();
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+    });
     await page.setUserAgent(USER_AGENT);
     await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' });
     await page.setViewport({ width: 1280, height: 800 });

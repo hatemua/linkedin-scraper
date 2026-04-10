@@ -11,7 +11,25 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 8071;
 const COOKIES_PATH = path.join(__dirname, 'cookies.json');
-const CHROMIUM_PATH = '/usr/bin/chromium-browser';
+
+function resolveBrowserPath() {
+  if (process.env.CHROMIUM_PATH) return process.env.CHROMIUM_PATH;
+  const candidates = [
+    '/usr/bin/google-chrome-stable',
+    '/usr/bin/google-chrome',
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+  ];
+  for (const p of candidates) {
+    try {
+      const stat = fs.statSync(p);
+      if (stat.isFile() && stat.size > 100_000) return p;
+    } catch (_) {}
+  }
+  return null;
+}
+
+const CHROMIUM_PATH = resolveBrowserPath();
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
 const MIN_REQUEST_DELAY = 3000;
 
@@ -22,6 +40,9 @@ let lastRequestTime = 0;
 
 async function launchBrowser() {
   if (browser && browser.connected) return browser;
+  if (!CHROMIUM_PATH) {
+    throw new Error('No Chrome/Chromium binary found. Set CHROMIUM_PATH env var or install google-chrome-stable.');
+  }
   browser = await puppeteer.launch({
     executablePath: CHROMIUM_PATH,
     headless: 'new',
@@ -36,7 +57,7 @@ async function launchBrowser() {
     ]
   });
   browser.on('disconnected', () => { browser = null; });
-  console.log(`[${ts()}] Browser launched`);
+  console.log(`[${ts()}] Browser launched at ${CHROMIUM_PATH}`);
   return browser;
 }
 
@@ -389,9 +410,31 @@ app.post('/profile', async (req, res) => {
       }
 
       // ── Name, headline, location ──
-      const name = getText(document.querySelector('h1')) || '';
-      const headline = getText(document.querySelector('.text-body-medium')) || '';
-      const location = getText(document.querySelector('.text-body-small.inline.t-black--light.break-words')) || '';
+      const mainEl = document.querySelector('main');
+      const scope = mainEl || document;
+      let name = getText(scope.querySelector('h1'));
+      if (!name) {
+        const og = document.querySelector('meta[property="og:title"]');
+        if (og) name = (og.getAttribute('content') || '').replace(/\s*\|\s*LinkedIn\s*$/i, '').trim();
+      }
+      if (!name) {
+        name = (document.title || '').replace(/\s*\|\s*LinkedIn\s*$/i, '').trim();
+      }
+      let headline = getText(scope.querySelector('.text-body-medium'));
+      if (!headline) {
+        const h1 = scope.querySelector('h1');
+        if (h1 && h1.parentElement) {
+          const sib = h1.parentElement.querySelector('.text-body-medium') || h1.nextElementSibling;
+          headline = getText(sib);
+        }
+      }
+      let location = getText(scope.querySelector('.text-body-small.inline.t-black--light.break-words'));
+      if (!location) {
+        // Fallback: any small black-light text near the top of main
+        const loc = scope.querySelector('.pv-text-details__left-panel .text-body-small')
+                 || scope.querySelector('span.text-body-small.t-black--light');
+        location = getText(loc);
+      }
 
       // ── Connections ──
       let connections = '';
